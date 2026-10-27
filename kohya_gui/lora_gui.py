@@ -3043,9 +3043,7 @@ def lora_tab(
                 # Show or hide LoCon conv settings depending on LoRA type selection
                 def update_LoRA_settings(
                     LoRA_type,
-                    conv_dim,
-                    network_dim,
-                ):
+                ) -> tuple:
                     log.debug("LoRA type changed...")
 
                     regularizer_vis = regularizer_controls_visible(LoRA_type)
@@ -3215,7 +3213,16 @@ def lora_tab(
                                     }
                                     else 512
                                 ),
-                                "value": conv_dim,  # if conv_dim > 512 else conv_dim,
+                                # GH #3606 / #1846: never echo the slider value
+                                # back here. When a config file is loaded,
+                                # LoRA_type and conv_dim/network_dim are set in
+                                # the same event; reading the slider as an input
+                                # snapshot captures the PRE-load value and
+                                # overwrites the loaded one (the race that made
+                                # Network/Convolution Rank reset to the default
+                                # until the config was loaded a second time).
+                                # Gradio keeps the current value and clamps it
+                                # client-side when the maximum shrinks.
                             },
                         },
                         "network_dim": {
@@ -3232,7 +3239,7 @@ def lora_tab(
                                     }
                                     else 512
                                 ),
-                                "value": network_dim,  # if network_dim > 512 else network_dim,
+                                # See the conv_dim comment above (GH #3606).
                             },
                         },
                         "bypass_mode": {
@@ -3563,8 +3570,6 @@ def lora_tab(
                 update_LoRA_settings,
                 inputs=[
                     LoRA_type,
-                    conv_dim,
-                    network_dim,
                 ],
                 outputs=[
                     network_row,
