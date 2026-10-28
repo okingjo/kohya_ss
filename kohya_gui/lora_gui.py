@@ -2238,6 +2238,23 @@ def train_model(
         )
     )
 
+    # MOSS-Image is a rectified-flow DiT: its trainer overrides
+    # post_process_loss to a no-op and its noise path ignores noise_offset /
+    # multires noise / adaptive_noise_scale. The GUI hides those controls for
+    # MOSS-Image, but a value loaded from an older SD/SDXL config could still
+    # be set; suppress them here so the emitted TOML never carries args the
+    # backend silently ignores. ip_noise_gamma IS applied by the flow noise
+    # path and stays untouched.
+    if moss_image_checkbox:
+        noise_offset = 0
+        noise_offset_random_strength = False
+        adaptive_noise_scale = 0
+        multires_noise_iterations = 0
+        debiased_estimation_loss = False
+        min_snr_gamma = 0
+        v_pred_like_loss = 0
+        scale_v_pred_loss_like_noise_pred = False
+
     config_toml_data = {
         "adaptive_noise_scale": (
             adaptive_noise_scale
@@ -3228,6 +3245,18 @@ def lora_tab(
 
                     regularizer_vis = regularizer_controls_visible(LoRA_type)
 
+                    # MOSS-Image is a rectified-flow DiT: its trainer overrides
+                    # post_process_loss to a no-op and uses a flow-matching noise
+                    # path, so the DDPM/SDXL-only Advanced controls below have no
+                    # effect (min_snr_gamma / debiased_estimation_loss /
+                    # v_pred_like_loss / scale_v_pred_loss_like_noise_pred /
+                    # noise_offset / multires noise). clip_skip and the SD
+                    # max_token_length are also unused (MOSS uses
+                    # moss_max_token_length). Hide them so users don't set
+                    # values that are silently ignored. ip_noise_gamma IS
+                    # applied by the flow path, so it stays visible.
+                    is_moss_image = LoRA_type == "MOSS-Image"
+
                     lora_settings_config = {
                         "network_row": {
                             "gr_type": gr.Row,
@@ -3639,6 +3668,46 @@ def lora_tab(
                                 },
                             },
                         },
+                        # MOSS-Image (rectified-flow DiT): hide Advanced controls
+                        # that its trainer ignores (see is_moss_image note above).
+                        # The whole noise-offset row is hidden as ONE unit:
+                        # its inner noise_offset_original / noise_offset_multires
+                        # sub-rows are driven by the noise_offset_type dropdown
+                        # handler, so toggling those children from here too would
+                        # make two handlers fight over the same visibility and
+                        # restore inconsistently. Hiding the parent row avoids
+                        # that and restores cleanly on the way back.
+                        # (ip_noise_gamma lives in this row and IS applied by the
+                        # flow path, but it defaults to 0 and is still forwarded
+                        # to the TOML when a loaded config sets it.)
+                        "noise_offset_row": {
+                            "gr_type": gr.Row,
+                            "update_params": {"visible": not is_moss_image},
+                        },
+                        "clip_skip": {
+                            "gr_type": gr.Slider,
+                            "update_params": {"visible": not is_moss_image},
+                        },
+                        "max_token_length": {
+                            "gr_type": gr.Dropdown,
+                            "update_params": {"visible": not is_moss_image},
+                        },
+                        "min_snr_gamma": {
+                            "gr_type": gr.Slider,
+                            "update_params": {"visible": not is_moss_image},
+                        },
+                        "debiased_estimation_loss": {
+                            "gr_type": gr.Checkbox,
+                            "update_params": {"visible": not is_moss_image},
+                        },
+                        "v_pred_like_loss": {
+                            "gr_type": gr.Slider,
+                            "update_params": {"visible": not is_moss_image},
+                        },
+                        "scale_v_pred_loss_like_noise_pred": {
+                            "gr_type": gr.Checkbox,
+                            "update_params": {"visible": not is_moss_image},
+                        },
                     }
 
                     results = []
@@ -3792,6 +3861,13 @@ def lora_tab(
                     unit,
                     lycoris_accordion,
                     loraplus,
+                    advanced_training.noise_offset_row,
+                    advanced_training.clip_skip,
+                    advanced_training.max_token_length,
+                    advanced_training.min_snr_gamma,
+                    advanced_training.debiased_estimation_loss,
+                    advanced_training.v_pred_like_loss,
+                    advanced_training.scale_v_pred_loss_like_noise_pred,
                 ],
             )
 

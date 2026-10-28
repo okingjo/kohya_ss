@@ -406,7 +406,7 @@ class AdvancedTraining:
                 info="Values lower than 1000 will make the model more img2img focussed. 1000 = noise only",
             )
 
-        with gr.Row():
+        with gr.Row() as self.noise_offset_row:
             self.noise_offset_type = gr.Dropdown(
                 label="Noise offset type",
                 choices=[

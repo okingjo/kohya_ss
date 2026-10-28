@@ -214,6 +214,44 @@ class TestMossImageLoraConfigOutput(unittest.TestCase):
         config = self._run_and_load_toml({"fp8_base": True})
         self.assertNotIn("fp8_base", config)
 
+    def test_ddpm_only_loss_args_suppressed_even_with_stale_values(self):
+        # A config migrated from SD/SDXL may carry values for args the MOSS
+        # trainer ignores (post_process_loss is a no-op; the flow noise path
+        # does not apply noise_offset/multires/adaptive). The emitted TOML
+        # must not contain them.
+        config = self._run_and_load_toml(
+            {
+                "debiased_estimation_loss": True,
+                "min_snr_gamma": 5,
+                "v_pred_like_loss": 0.5,
+                "scale_v_pred_loss_like_noise_pred": True,
+                "noise_offset": 0.1,
+                "noise_offset_random_strength": True,
+                "adaptive_noise_scale": 0.1,
+                "multires_noise_iterations": 6,
+                "multires_noise_discount": 0.3,
+            }
+        )
+        for key in (
+            "debiased_estimation_loss",
+            "min_snr_gamma",
+            "v_pred_like_loss",
+            "scale_v_pred_loss_like_noise_pred",
+            "noise_offset",
+            "noise_offset_random_strength",
+            "adaptive_noise_scale",
+            "multires_noise_iterations",
+            "multires_noise_discount",
+        ):
+            self.assertNotIn(key, config)
+
+    def test_ip_noise_gamma_still_forwarded_for_moss(self):
+        # ip_noise_gamma IS applied by the flow-matching noise path
+        # (flux_train_utils.get_noisy_model_input_and_timesteps), so unlike
+        # the other noise args it must survive.
+        config = self._run_and_load_toml({"ip_noise_gamma": 0.1})
+        self.assertEqual(config.get("ip_noise_gamma"), 0.1)
+
     def test_sample_uncond_skip_layers_default_omitted(self):
         config = self._run_and_load_toml({})
         self.assertNotIn("sample_uncond_skip_layers", config)
@@ -294,6 +332,93 @@ class TestMossImageNativeLohaLokr(unittest.TestCase):
         self.assertTrue(mocked.called)
         run_cmd = mocked.call_args[0][0]
         self.assertTrue(any("moss_image_train_network.py" in p for p in run_cmd))
+
+
+class TestMossImageAdvancedFieldVisibility(unittest.TestCase):
+    """The LoRA-type change handler must hide the Advanced controls that the
+    MOSS-Image trainer ignores, and show them again for every other type.
+
+    Hidden for MOSS-Image: the whole noise-offset row (noise_offset_type,
+    noise_offset, multires, adaptive_noise_scale, ip_noise_gamma), clip_skip,
+    max_token_length, min_snr_gamma, debiased_estimation_loss,
+    v_pred_like_loss, scale_v_pred_loss_like_noise_pred.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import gradio as gr
+
+        from kohya_gui.class_gui_config import KohyaSSGUIConfig
+
+        with gr.Blocks() as demo:
+            lora_gui.lora_tab(headless=True, config=KohyaSSGUIConfig())
+        cls.dep_fn = None
+        for fn in demo.fns.values():
+            if getattr(fn.fn, "__name__", "") == "update_LoRA_settings":
+                cls.dep_fn = fn
+                break
+        assert cls.dep_fn is not None, "update_LoRA_settings not wired"
+
+    def _visibility(self, lora_type):
+        """Return {label-or-component: visible} for handler outputs."""
+        results = self.dep_fn.fn(lora_type)
+        assert len(results) == len(self.dep_fn.outputs)
+        vis = {}
+        for update, comp in zip(results, self.dep_fn.outputs):
+            label = getattr(comp, "label", None) or type(comp).__name__
+            vis[label] = update.constructor_args.get("visible")
+        return vis
+
+    HIDDEN_FOR_MOSS = (
+        "Clip skip",
+        "Max Token Length",
+        "Min SNR gamma",
+        "Debiased Estimation loss",
+        "V Pred like loss",
+        "Scale v prediction loss",
+    )
+
+    def test_moss_hides_ddpm_only_advanced_controls(self):
+        vis = self._visibility("MOSS-Image")
+        for label in self.HIDDEN_FOR_MOSS:
+            self.assertIs(
+                vis.get(label), False, f"{label} must be hidden for MOSS-Image"
+            )
+
+    def test_moss_hides_noise_offset_row(self):
+        # The wiring ends with [..., loraplus, noise_offset_row, clip_skip,
+        # max_token_length, min_snr_gamma, debiased_estimation_loss,
+        # v_pred_like_loss, scale_v_pred_loss_like_noise_pred] — so the
+        # noise-offset Row is the 7th output from the end (a bare gr.Row
+        # with no label to key on).
+        results = self.dep_fn.fn("MOSS-Image")
+        noise_row_update = results[-7]
+        self.assertEqual(type(self.dep_fn.outputs[-7]).__name__, "Row")
+        self.assertIs(
+            noise_row_update.constructor_args.get("visible"),
+            False,
+            "noise_offset_row must be hidden for MOSS-Image",
+        )
+        results_std = self.dep_fn.fn("Standard")
+        self.assertIs(
+            results_std[-7].constructor_args.get("visible"),
+            True,
+            "noise_offset_row must be visible again for Standard",
+        )
+
+    def test_other_types_keep_advanced_controls_visible(self):
+        for lora_type in ("Standard", "Kohya LoCon", "LyCORIS/LoCon", "Flux1"):
+            vis = self._visibility(lora_type)
+            for label in self.HIDDEN_FOR_MOSS:
+                self.assertIs(
+                    vis.get(label),
+                    True,
+                    f"{label} must stay visible for {lora_type}",
+                )
+
+    def test_handler_output_arity_matches_wiring(self):
+        results = self.dep_fn.fn("MOSS-Image")
+        self.assertEqual(len(results), len(self.dep_fn.outputs))
 
 
 if __name__ == "__main__":
